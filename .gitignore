@@ -42,8 +42,20 @@ home-assistant.log
 home-assistant.log.*
 ozw_log.txt
 
-# Development files
-custom_components
+# ===============================
+
+# IMPORTANT: custom_components handling
+
+# ===============================
+
+# Ignore all custom components by default
+
+custom_components/*
+
+# Allow this integration (required for HACS)
+
+!custom_components/portacool_apex/
+!custom_components/portacool_apex/**
 
 ### macOS ###
 # General
