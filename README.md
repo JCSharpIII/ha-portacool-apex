@@ -1,4 +1,4 @@
-![PortaCool Apex](images/icon.png)
+![PortaCool Apex](icon.png)
 
 # PortaCool Apex
 
