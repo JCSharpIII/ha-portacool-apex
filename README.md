@@ -1,64 +1,145 @@
 ![PortaCool Apex](icon.png)
 
-# PortaCool Apex
+# Portacool APEX
 
-A Home Assistant custom integration for controlling **PortaCool Apex evaporative coolers** using the official PortaCool cloud API.
+A Home Assistant custom integration for controlling **Portacool APEX evaporative coolers** using the official Portacool cloud backend (Firebase / REST).
 
-This integration is **UI-configured only** (no YAML) and provides direct control of power, fan speed, and timer functions.
+This integration is **UI-configured only** (no YAML) and exposes power, fan, pump, timer, temperature, water status, and device health in a clean, Home Assistant–native way.
+
+> This is an **unofficial** integration and is not affiliated with or endorsed by Portacool.
 
 ---
 
 ## Features
 
-- Cloud-based authentication using PortaCool credentials
-- Main power control (On / Off)
-- Fan speed selection via dropdown (0–5)
-- Timer control via dropdown
-- Native Home Assistant entities
-- Config Flow setup (no YAML)
+- Cloud authentication using Portacool account credentials
+- Automatic device discovery
+- Real-time state updates via Firebase WebSockets
+- Main power control
+- Fan mode control (Off → 100%)
+- Pump mode control (Off / Eco / Manual speeds / Max)
+- Sleep timer with remaining time sensor
+- Exit temperature sensor
+- Ambient temperature sensor
+- Water tank status monitoring
+- Input voltage monitoring
+- Clean entity model (no duplicate or conflicting controls)
+- Fully UI-configured via Config Flow (no YAML)
 
 ---
 
 ## Entities Created
 
-For each PortaCool Apex device, the following entities are created:
+Each Portacool APEX device creates the following entities.
 
-### Switch
+---
 
-- **Power**  
-  Turns the unit on or off.
+### Switch Entities
 
-### Select
+#### **Power**
+- Turns the entire unit **On / Off**
+- When powered off:
+  - Fan and pump controls remain visible but do not send commands
+  - Sensor updates continue (cloud-reported state)
 
-- **Fan Speed**  
-  Discrete fan speed selection:
-  - 0 (Off)
-  - 1
-  - 2
-  - 3
-  - 4
-  - 5
+---
 
-- **Timer**
-  - Off
-  - 30 minutes
-  - 1 hour
-  - 2 hours
-  - 4 hours
-  - 8 hours
+### Select Entities
 
-Fan speed is implemented as a `select` entity instead of a fan on/off switch to match how the PortaCool API behaves.
+#### **Fan Mode**
+Controls fan output as discrete, user-friendly steps:
+
+- Off  
+- 20%  
+- 40%  
+- 60%  
+- 80%  
+- 100%
+
+Mapped internally to the device’s native fan control datapoints.
+
+---
+
+#### **Pump Mode**
+Unified pump control combining **Off**, **presets**, and **manual speeds**:
+
+- Off
+- Eco
+- 1
+- 2
+- 3
+- 4
+- 5
+- Max
+
+This avoids conflicting states between Eco / Max and manual pump speeds.
+
+---
+
+#### **Sleep Timer**
+Sets the device sleep timer:
+
+- Off
+- 30 minutes
+- 1 hour
+- 2 hours
+- 4 hours
+- 8 hours
+
+---
+
+### Sensor Entities
+
+#### **Timer Remaining**
+- Remaining sleep-timer duration
+- Updates periodically
+- Clears automatically when the timer expires or is turned off
+- Displayed in minutes for readability
+
+---
+
+#### **Exit Temperature**
+- Temperature of air exiting the unit
+- °F (reported directly from device)
+
+---
+
+#### **Ambient Temperature**
+- Ambient intake temperature
+- °F
+
+---
+
+#### **Water Status**
+Summarized water tank state derived from device alerts:
+
+- Normal
+- Low
+- Empty
+- Overflow
+
+Only the **highest-priority active condition** is shown.
+
+---
+
+#### **Input Voltage**
+- Line input voltage reported by the unit
+- Used by the device internally for load and fault detection
 
 ---
 
 ## Installation (HACS)
 
+### Recommended (HACS)
+
 1. Open **HACS**
 2. Go to **Integrations**
-3. Add this repository as a **Custom Repository**
-4. Select **Integration**
-5. Install **PortaCool Apex**
-6. Restart Home Assistant
+3. Click **Custom repositories**
+4. Add this repository:
+      https://github.com/JCSharpIII/ha-portacool-apex
+5. Category: **Integration**
+6. Install **Portacool APEX**
+7. Restart Home Assistant
 
 ---
 
@@ -66,52 +147,64 @@ Fan speed is implemented as a `select` entity instead of a fan on/off switch to 
 
 1. Go to **Settings → Devices & Services**
 2. Click **Add Integration**
-3. Search for **PortaCool Apex**
-4. Log in using your PortaCool account credentials
-5. Select the device you want to add
+3. Search for **Portacool APEX**
+4. Log in with your Portacool account credentials
+5. Your device will be discovered automatically
+
+The integration title and device name are pulled directly from the Portacool API (model and device name).
+
+---
+
+## How It Works
+
+- Authentication uses Portacool’s official cloud endpoints
+- State updates are received via **Firebase WebSockets**
+- Commands are sent using Portacool’s device action API
+- Polling fallback is used conservatively to avoid rate limits
+- Sensor updates continue even when the unit is powered off
 
 ---
 
 ## Configuration Notes
 
 - YAML configuration is **not supported**
-- Fan on/off services are **not exposed**
-- Fan speed `0` effectively acts as “fan off”
-- Cloud latency depends on PortaCool API responsiveness
-
----
-
-## Requirements
-
-- Home Assistant **2024.6.0** or newer
-- Active PortaCool account
-- Internet connectivity (cloud-based API)
+- All entities are created automatically
+- Polling interval defaults to **60 seconds**
+- WebSocket updates are preferred whenever available
 
 ---
 
 ## Known Limitations
 
-- Pump and water level controls are not yet exposed
-- No local control (cloud API only)
-- API does not provide real-time state updates for all datapoints
+- Cloud-only (no local control)
+- Fan RPM is not currently exposed by the API
+- Some internal datapoints are undocumented and inferred
+- Device availability depends on Portacool cloud uptime
 
 ---
 
-## Disclaimer
+## Debugging & Support
 
-This is an **unofficial** integration and is not affiliated with or endorsed by PortaCool.
+To enable debug logging:
 
----
+```yaml
+logger:
+default: info
+logs:
+ custom_components.portacool_apex: debug
 
-## Support
+When opening a GitHub issue, include:
+	•	Device model
+	•	Relevant logs
+	•	Description of the behavior
 
-If you encounter issues:
+Roadmap / Ideas
+	•	Climate entity abstraction
+	•	Fan RPM detection (if exposed by API)
+	•	Better water level percentage mapping
+	•	Dashboard card templates
+	•	Multi-device support improvements
 
-- Enable debug logging for `portacool_apex`
-- Open a GitHub issue with logs and device model information
-
----
-
-## License
+License
 
 MIT License

@@ -2,6 +2,6 @@
   "name": "PortaCool Apex",
   "content_in_root": false,
   "domain": "portacool_apex",
-  "homeassistant": "2024.6.0",
+  "homeassistant": "2024.12.0",
   "version": "0.1.1"
 }
