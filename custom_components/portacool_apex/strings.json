@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "PortaCool Login",
-        "description": "Enter your PortaCool account credentials."
+        "title": "Portacool Login",
+        "description": "Enter your Portacool account credentials."
       }
     },
     "error": {
       "invalid_auth": "Invalid username or password.",
-      "cannot_connect": "Could not connect to PortaCool.",
+      "cannot_connect": "Could not connect to Portacool.",
       "unknown": "Unexpected error occurred."
     },
     "abort": {

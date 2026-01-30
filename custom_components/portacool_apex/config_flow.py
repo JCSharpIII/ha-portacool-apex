@@ -8,11 +8,11 @@ from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 from homeassistant.helpers import aiohttp_client
 
 from .const import DOMAIN
-from .auth import PortaCoolApexAuth
-from .api import PortaCoolApexAPI
+from .auth import PortacoolAPEXAuth
+from .api import PortacoolAPEXAPI
 
 
-class PortaCoolApexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class PortacoolAPEXConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
@@ -33,10 +33,10 @@ class PortaCoolApexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         password = user_input[CONF_PASSWORD]
 
         session = aiohttp_client.async_get_clientsession(self.hass)
-        auth = PortaCoolApexAuth(session, username, password)
+        auth = PortacoolAPEXAuth(session, username, password)
 
         # Temporary API object for discovery; dummy IDs are fine for get_devices()
-        api = PortaCoolApexAPI(session, auth, unique_id="0-0", device_type_id=0)
+        api = PortacoolAPEXAPI(session, auth, unique_id="0-0", device_type_id=0)
 
         try:
             devices = await api.get_devices()
@@ -65,8 +65,9 @@ class PortaCoolApexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         d = devices[0]
-        title = d.get("deviceName", "PortaCool Apex")
-
+        name = d.get("deviceName", "PortaCool APEX")
+        model = d.get("modelNumber")
+        title = f"{name} ({model})" if model else name
         return self.async_create_entry(
             title=title,
             data={
