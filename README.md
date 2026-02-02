@@ -106,71 +106,6 @@ Typical options:
 type: vertical-stack
 cards:
   - type: entities
-    title: Portacool APEX
-    show_header_toggle: false
-    entities:
-      - entity: switch.apex_1200_power
-        name: Power
-      - entity: select.apex_1200_fan_mode
-        name: Fan Mode
-      - entity: select.apex_1200_pump_mode
-        name: Pump Mode
-      - entity: select.apex_1200_sleep_timer
-        name: Timer
-      - entity: sensor.apex_1200_timer_remaining
-        name: Timer Remaining (s)
-      - entity: sensor.apex_1200_water_alert
-        name: Water Alert
-      - entity: sensor.apex_1200_water_level
-        name: Water Level
-    state_color: true
-
-  - type: history-graph
-    title: Trends (last 2h)
-    hours_to_show: 2
-    refresh_interval: 30
-    entities:
-      - entity: sensor.apex_1200_exit_temperature
-        name: Exit
-      - entity: sensor.apex_1200_ambient_temperature
-        name: Ambient
-      - entity: sensor.apex_1200_calculated_airflow_cfm
-        name: Airflow (CFM)
-
-  - type: gauge
-    name: Water Level (Estimated)
-    entity: sensor.apex_1200_water_level
-    min: 0
-    max: 110
-    needle: false
-```
-
-Notes:
-- If you see the device name being prefixed on only one entity in a card, that’s usually the card’s “secondary info” / name resolution behavior; set explicit `name:` for each entity to keep it consistent.
-
----
-
-## Debug logging
-
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.portacool_apex: debug
-```
-
----
-
-
-Dashboard Card Suggestions:
-
-
-Vertical Stack Card
------------------------
-
-type: vertical-stack
-cards:
-  - type: entities
     title: Portacool Apex 1200
     show_header_toggle: false
     entities:
@@ -204,8 +139,24 @@ cards:
     min: 0
     max: 110
     needle: false
+```
+
+Notes:
+- If you see the device name being prefixed on only one entity in a card, that’s usually the card’s “secondary info” / name resolution behavior; set explicit `name:` for each entity to keep it consistent.
 
 ---
+
+## Debug logging
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.portacool_apex: debug
+```
+
+---
+
 
 ## Known limitations
 
