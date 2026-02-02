@@ -4,17 +4,40 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import UnitOfElectricPotential, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    UnitOfElectricPotential,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ALERT_CATEGORIES
-
-DP_EXIT_TEMP = 3
-DP_AMBIENT_TEMP = 4
-DP_VOLTAGE_A = 31
-DP_VOLTAGE_B = 32
+from .const import (
+    ALERT_CATEGORIES,
+    DOMAIN,
+    # telemetry dps
+    DP_AMBIENT_TEMP,
+    DP_EXIT_TEMP,
+    DP_MEDIA_TEMP,
+    DP_WATER_TEMP,
+    DP_VOLTAGE_A,
+    DP_VOLTAGE_B,
+    DP_FAN_FEEDBACK,
+    DP_FAN_SPEED,
+    # water
+    DP_WATER_LEVEL,
+    WATER_LEVEL_MAP,
+    WATER_VALUE_EMPTY,
+    WATER_VALUE_LOW,
+    WATER_VALUE_OVERFLOW,
+    WATER_ALERT_EMPTY,
+    WATER_ALERT_LOW,
+    WATER_ALERT_OVERFLOW,
+    # airflow
+    FAN_CFM_MAX,
+)
 
 
 def _category_key(alert_id: str) -> str | None:
@@ -39,10 +62,7 @@ def _severity(active_alerts: list[dict]) -> str:
 
 
 def _parse_timerexpiry(ts: Any) -> datetime | None:
-    """
-    Parses TimerExpiry like: 2026-01-29T06:54:30.3051500Z
-    Handles 7-digit fractional seconds by trimming to 6.
-    """
+    """Parse TimerExpiry like: 2026-01-29T06:54:30.3051500Z"""
     if not isinstance(ts, str) or not ts:
         return None
 
@@ -50,7 +70,6 @@ def _parse_timerexpiry(ts: Any) -> datetime | None:
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
 
-    # Normalize fractional seconds to 6 digits for datetime.fromisoformat
     if "." in s:
         head, tail = s.split(".", 1)
         if "+" in tail:
@@ -105,15 +124,151 @@ class _BasePortaCoolSensor(CoordinatorEntity, SensorEntity):
         return ti if isinstance(ti, dict) else {}
 
 
+class PortaCoolAirflowSensor(_BasePortaCoolSensor):
+    """DP7 = observed airflow/feedback value.
+
+    When fan is commanded Off (DP13 == "0"), DP7 can linger briefly.
+    We clamp to 0 after a grace period if fan is Off.
+    """
+
+    _attr_name = "Calculated Airflow (CFM)"
+    _attr_icon = "mdi:calculator"
+    _attr_state_class = "measurement"
+
+    _OFF_GRACE_SECONDS = 10
+
+    def __init__(self, coordinator, api, entry):
+        super().__init__(coordinator, api, entry)
+        # IMPORTANT: keep stable unique_id
+        self._attr_unique_id = f"{self._api.device_id}_fan_feedback"
+
+        self._last_raw: int | None = None
+        self._last_change_ts: float | None = None
+        self._unsub_tick = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._update_tracking()
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
+        self._unsub_tick = async_track_time_interval(self.hass, self._tick, timedelta(seconds=1))
+        self.async_on_remove(self._unsub_tick)
+
+    def _handle_coordinator_update(self) -> None:
+        self._update_tracking()
+        self.async_write_ha_state()
+
+    async def _tick(self, _now: datetime) -> None:
+        self.async_write_ha_state()
+
+    def _update_tracking(self) -> None:
+        raw = self._get_dp(DP_FAN_FEEDBACK)
+        if raw is None:
+            return
+        try:
+            val = int(float(raw))
+        except Exception:
+            return
+
+        now = datetime.now(timezone.utc).timestamp()
+        if self._last_raw is None or val != self._last_raw:
+            self._last_raw = val
+            self._last_change_ts = now
+
+    def _should_clamp_off(self) -> bool:
+        fan_mode = self._get_dp(DP_FAN_SPEED)
+        if fan_mode != "0":
+            return False
+
+        if self._last_raw is None:
+            return True
+        if self._last_raw == 0:
+            return True
+        if self._last_change_ts is None:
+            return False
+
+        now = datetime.now(timezone.utc).timestamp()
+        return (now - self._last_change_ts) >= self._OFF_GRACE_SECONDS
+
+    @property
+    def native_value(self):
+        raw = self._get_dp(DP_FAN_FEEDBACK)
+        if raw is None:
+            return None
+        try:
+            val = int(float(raw))
+        except Exception:
+            return None
+
+        self._update_tracking()
+
+        if self._should_clamp_off():
+            return 0
+
+        return val
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "raw": self._get_dp(DP_FAN_FEEDBACK),
+            "dp": DP_FAN_FEEDBACK,
+            "fan_mode_dp": DP_FAN_SPEED,
+            "fan_mode_raw": self._get_dp(DP_FAN_SPEED),
+        }
+
+
+class PortaCoolAirflowPercentSensor(_BasePortaCoolSensor):
+    _attr_name = "Max Airflow %"
+    _attr_icon = "mdi:percent"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = "measurement"
+
+    def __init__(self, coordinator, api, entry, airflow_sensor: PortaCoolAirflowSensor):
+        super().__init__(coordinator, api, entry)
+        # IMPORTANT: keep stable unique_id
+        self._attr_unique_id = f"{self._api.device_id}_fan_feedback_percent"
+        self._airflow_sensor = airflow_sensor
+        self._unsub_tick = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._unsub_tick = async_track_time_interval(self.hass, self._tick, timedelta(seconds=1))
+        self.async_on_remove(self._unsub_tick)
+
+    async def _tick(self, _now: datetime) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        raw_val = self._airflow_sensor.native_value
+        if raw_val is None:
+            return None
+        try:
+            val = float(raw_val)
+        except Exception:
+            return None
+
+        if val <= 0:
+            return 0
+        if FAN_CFM_MAX <= 0:
+            return None
+
+        pct = round((val / float(FAN_CFM_MAX)) * 100)
+        return max(0, min(100, pct))
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "cfm_max": FAN_CFM_MAX,
+            "dp": DP_FAN_FEEDBACK,
+            "raw": self._get_dp(DP_FAN_FEEDBACK),
+        }
+
+
 class PortaCoolTimerRemainingSensor(_BasePortaCoolSensor):
-    """
-    Professional countdown:
-    - Polling provides TimerExpiry (authoritative)
-    - We tick locally every 1s to update remaining time without extra network traffic
-    """
     _attr_name = "Timer Remaining"
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_icon = "mdi:timer-sand"
+    _attr_state_class = "measurement"
 
     def __init__(self, coordinator, api, entry):
         super().__init__(coordinator, api, entry)
@@ -121,40 +276,33 @@ class PortaCoolTimerRemainingSensor(_BasePortaCoolSensor):
 
         self._expiry_raw: str | None = None
         self._expiry_dt: datetime | None = None
-        self._sleep_timer: Any = None
         self._unsub_tick = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
 
-        # Seed values from current coordinator data
-        self._refresh_from_coordinator()
-
-        # Subscribe to coordinator updates (so when TimerExpiry changes, countdown resets)
+        self._refresh_timer_info()
         self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
 
-        # Local 1-second tick
         self._unsub_tick = async_track_time_interval(self.hass, self._tick, timedelta(seconds=1))
         self.async_on_remove(self._unsub_tick)
 
     def _handle_coordinator_update(self) -> None:
-        # Called when coordinator refreshes
-        self._refresh_from_coordinator()
+        self._refresh_timer_info()
         self.async_write_ha_state()
-
-    def _refresh_from_coordinator(self) -> None:
-        ti = self._timer_info()
-        self._sleep_timer = ti.get("SleepTimer")
-        self._expiry_raw = ti.get("TimerExpiry")
-        self._expiry_dt = _parse_timerexpiry(self._expiry_raw)
 
     async def _tick(self, _now: datetime) -> None:
-        # Only update our entity; no network calls
         self.async_write_ha_state()
 
+    def _refresh_timer_info(self) -> None:
+        ti = self._timer_info()
+        raw = ti.get("TimerExpiry")
+        if raw != self._expiry_raw:
+            self._expiry_raw = raw
+            self._expiry_dt = _parse_timerexpiry(raw)
+
     @property
-    def native_value(self):
-        # If expiry missing -> 0
+    def native_value(self) -> int:
         if not self._expiry_dt:
             return 0
         now = datetime.now(timezone.utc)
@@ -163,31 +311,27 @@ class PortaCoolTimerRemainingSensor(_BasePortaCoolSensor):
 
     @property
     def extra_state_attributes(self):
-        remaining = int(self.native_value or 0)
-        hrs = remaining // 3600
-        mins = (remaining % 3600) // 60
-        secs = remaining % 60
         return {
-            "SleepTimer": self._sleep_timer,
             "TimerExpiry": self._expiry_raw,
             "TimerExpiryUtc": self._expiry_dt.isoformat() if self._expiry_dt else None,
-            "remaining_hms": f"{hrs:01d}:{mins:02d}:{secs:02d}",
         }
 
 
-class PortaCoolExitTemperatureSensor(_BasePortaCoolSensor):
-    _attr_name = "Exit Temperature"
+class PortaCoolTemperatureSensor(_BasePortaCoolSensor):
     _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
     _attr_device_class = "temperature"
     _attr_state_class = "measurement"
 
-    def __init__(self, coordinator, api, entry):
+    def __init__(self, coordinator, api, entry, name: str, unique_suffix: str, dp_id: int, icon: str):
         super().__init__(coordinator, api, entry)
-        self._attr_unique_id = f"{self._api.device_id}_exit_temp"
+        self._attr_name = name
+        self._attr_unique_id = f"{self._api.device_id}_{unique_suffix}"
+        self._dp_id = dp_id
+        self._attr_icon = icon
 
     @property
     def native_value(self):
-        raw = self._get_dp(DP_EXIT_TEMP)
+        raw = self._get_dp(self._dp_id)
         if raw is None:
             return None
         try:
@@ -197,32 +341,7 @@ class PortaCoolExitTemperatureSensor(_BasePortaCoolSensor):
 
     @property
     def extra_state_attributes(self):
-        return {"raw": self._get_dp(DP_EXIT_TEMP)}
-
-
-class PortaCoolAmbientTemperatureSensor(_BasePortaCoolSensor):
-    _attr_name = "Ambient Temperature"
-    _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
-    _attr_device_class = "temperature"
-    _attr_state_class = "measurement"
-
-    def __init__(self, coordinator, api, entry):
-        super().__init__(coordinator, api, entry)
-        self._attr_unique_id = f"{self._api.device_id}_ambient_temp"
-
-    @property
-    def native_value(self):
-        raw = self._get_dp(DP_AMBIENT_TEMP)
-        if raw is None:
-            return None
-        try:
-            return int(round(float(raw)))
-        except Exception:
-            return None
-
-    @property
-    def extra_state_attributes(self):
-        return {"raw": self._get_dp(DP_AMBIENT_TEMP)}
+        return {"raw": self._get_dp(self._dp_id), "dp": self._dp_id}
 
 
 class PortaCoolInputVoltageSensor(_BasePortaCoolSensor):
@@ -255,7 +374,96 @@ class PortaCoolInputVoltageSensor(_BasePortaCoolSensor):
         }
 
 
+class PortaCoolWaterAlertSensor(_BasePortaCoolSensor):
+    """Water Alert: Tank Empty / Tank Low / Tank Overfill / OK (based on alerts)."""
+
+    _attr_name = "Water Alert"
+    _attr_icon = "mdi:water-alert"
+
+    def __init__(self, coordinator, api, entry):
+        super().__init__(coordinator, api, entry)
+        self._attr_unique_id = f"{self._api.device_id}_water_alert"
+
+    @property
+    def native_value(self):
+        alerts = self._get_alerts()
+        active = [a for a in alerts if _is_active(a)]
+        active_ids = {a.get("alertId") for a in active}
+
+        if WATER_ALERT_OVERFLOW in active_ids:
+            return "Tank Overfill"
+        if WATER_ALERT_EMPTY in active_ids:
+            return "Tank Empty"
+        if WATER_ALERT_LOW in active_ids:
+            return "Tank Low"
+        return "OK"
+
+    @property
+    def extra_state_attributes(self):
+        alerts = self._get_alerts()
+        active = [a for a in alerts if _is_active(a)]
+        water_active = [a for a in active if _category_key(a.get("alertId", "")) == "4"]
+        return {"active_count": len(water_active), "active_alerts": water_active}
+
+
+class PortaCoolWaterLevelSensor(_BasePortaCoolSensor):
+    """Water Level: numeric percent-like value for charts/gauges.
+
+    Priority:
+      1) Overfill alert => WATER_VALUE_OVERFLOW
+      2) Empty alert    => WATER_VALUE_EMPTY
+      3) Low alert      => WATER_VALUE_LOW
+      4) DP5 bar count  => WATER_LEVEL_MAP lookup (1..5)
+    """
+
+    _attr_name = "Water Level"
+    _attr_icon = "mdi:water-percent"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = "measurement"
+
+    def __init__(self, coordinator, api, entry):
+        super().__init__(coordinator, api, entry)
+        self._attr_unique_id = f"{self._api.device_id}_water_level"
+
+    @property
+    def native_value(self):
+        alerts = self._get_alerts()
+        active = [a for a in alerts if _is_active(a)]
+        active_ids = {a.get("alertId") for a in active}
+
+        if WATER_ALERT_OVERFLOW in active_ids:
+            return WATER_VALUE_OVERFLOW
+        if WATER_ALERT_EMPTY in active_ids:
+            return WATER_VALUE_EMPTY
+        if WATER_ALERT_LOW in active_ids:
+            return WATER_VALUE_LOW
+
+        raw = self._get_dp(DP_WATER_LEVEL)
+        if raw is None:
+            return None
+        mapped = WATER_LEVEL_MAP.get(str(raw))
+        if mapped is None:
+            return None
+        try:
+            return float(mapped)
+        except Exception:
+            return None
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "water_level_dp": DP_WATER_LEVEL,
+            "water_level_raw": self._get_dp(DP_WATER_LEVEL),
+            "map": WATER_LEVEL_MAP,
+            "empty": WATER_VALUE_EMPTY,
+            "low": WATER_VALUE_LOW,
+            "overflow": WATER_VALUE_OVERFLOW,
+        }
+
+
 class PortaCoolCategoryStatusSensor(_BasePortaCoolSensor):
+    """Status sensors for non-water categories (Fan/Pump/Louvers/Temp/Voltage)."""
+
     def __init__(self, coordinator, api, entry, cat_num: str, cat_name: str):
         super().__init__(coordinator, api, entry)
         self._cat_num = cat_num
@@ -307,15 +515,63 @@ async def async_setup_entry(hass, entry, async_add_entities):
     api = data["api"]
     coordinator = data["coordinator"]
 
+    device_name = (entry.data.get("device_name") or "").upper()
+    has_louvers = any(x in device_name for x in ("APEX 500", "APEX 700"))
+
+    airflow_raw = PortaCoolAirflowSensor(coordinator, api, entry)
+    airflow_pct = PortaCoolAirflowPercentSensor(coordinator, api, entry, airflow_raw)
+
+    temp_ambient = PortaCoolTemperatureSensor(
+        coordinator, api, entry,
+        name="Ambient Temperature",
+        unique_suffix="ambient_temp",
+        dp_id=DP_AMBIENT_TEMP,
+        icon="mdi:weather-windy",
+    )
+    temp_exit = PortaCoolTemperatureSensor(
+        coordinator, api, entry,
+        name="Exit Temperature",
+        unique_suffix="exit_temp",
+        dp_id=DP_EXIT_TEMP,
+        icon="mdi:air-conditioner",
+    )
+    temp_media = PortaCoolTemperatureSensor(
+        coordinator, api, entry,
+        name="Media Temperature",
+        unique_suffix="media_temp",
+        dp_id=DP_MEDIA_TEMP,
+        icon="mdi:air-filter",
+    )
+    temp_water = PortaCoolTemperatureSensor(
+        coordinator, api, entry,
+        name="Water Temperature",
+        unique_suffix="water_temp",
+        dp_id=DP_WATER_TEMP,
+        icon="mdi:water-thermometer",
+    )
+
     entities: list[SensorEntity] = [
+        airflow_raw,
+        airflow_pct,
         PortaCoolTimerRemainingSensor(coordinator, api, entry),
-        PortaCoolExitTemperatureSensor(coordinator, api, entry),
-        PortaCoolAmbientTemperatureSensor(coordinator, api, entry),
+        temp_ambient,
+        temp_exit,
+        temp_media,
+        temp_water,
         PortaCoolInputVoltageSensor(coordinator, api, entry),
+        PortaCoolWaterAlertSensor(coordinator, api, entry),
+        PortaCoolWaterLevelSensor(coordinator, api, entry),
         PortaCoolOverallStatusSensor(coordinator, api, entry),
     ]
 
+    # Category status sensors:
+    # - Always include everything except Water (we have dedicated Water sensors)
+    # - Skip Louvers on non-louver models
     for cat_num, cat_name in ALERT_CATEGORIES.items():
+        if cat_num == "4":
+            continue
+        if cat_num == "3" and not has_louvers:
+            continue
         entities.append(PortaCoolCategoryStatusSensor(coordinator, api, entry, cat_num, cat_name))
 
     async_add_entities(entities, True)

@@ -12,36 +12,39 @@ import aiohttp
 
 from .const import (
     API_BASE,
-    INVOKE_ACTION_ENDPOINT,
     ALERTS_LATEST_ENDPOINT,
+    DEVICES_MY_ENDPOINT,
     FIREBASE_CUSTOM_TOKEN_ENDPOINT,
+    FIREBASE_DB,
+    FIREBASE_WEB_API_KEY_DEFAULT,
+    INVOKE_ACTION_ENDPOINT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Firebase RTDB
-FIREBASE_DB = "https://portacool-prod-default-rtdb.firebaseio.com"
+DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
-# IdentityToolkit (v3) key you captured
-FIREBASE_WEB_API_KEY = "AIzaSyDiIbYOmLHbfeBf5mcbGICgasL-BkzS39c"
-VERIFY_CUSTOM_TOKEN_URL = (
-    f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyCustomToken?key={FIREBASE_WEB_API_KEY}"
-)
-
-
-class PortacoolAPEXAPI:
+class PortaCoolApexAPI:
     def __init__(
         self,
         session: aiohttp.ClientSession,
         auth,
         device_id: str,
         device_type_id: int,
+        firebase_web_api_key: str | None = None,
     ) -> None:
         self._session = session
         self._auth = auth
         self._device_id = device_id
         self._device_type_id = int(device_type_id)
         self._lock = asyncio.Lock()
+
+        # Firebase Identity Toolkit key (public); allow override via OptionsFlow
+        self._firebase_web_api_key = (firebase_web_api_key or FIREBASE_WEB_API_KEY_DEFAULT).strip()
+        self._verify_custom_token_url = (
+            "https://www.googleapis.com/identitytoolkit/v3/relyingparty/"
+            f"verifyCustomToken?key={self._firebase_web_api_key}"
+        )
 
         # Cached Firebase identity
         self._fb_id_token: str | None = None
@@ -52,6 +55,18 @@ class PortacoolAPEXAPI:
     def device_id(self) -> str:
         return self._device_id
 
+    def set_firebase_web_api_key(self, key: str | None) -> None:
+        """Update key at runtime (used when Options change and entry reloads)."""
+        self._firebase_web_api_key = (key or FIREBASE_WEB_API_KEY_DEFAULT).strip()
+        self._verify_custom_token_url = (
+            "https://www.googleapis.com/identitytoolkit/v3/relyingparty/"
+            f"verifyCustomToken?key={self._firebase_web_api_key}"
+        )
+        # Force re-auth next read
+        self._fb_id_token = None
+        self._fb_uid = None
+        self._fb_exp = 0
+
     async def _headers(self) -> dict[str, str]:
         if self._auth.is_expired():
             await self._auth.refresh()
@@ -61,9 +76,18 @@ class PortacoolAPEXAPI:
             "Accept": "application/json",
         }
 
-    async def _get_text(self, url: str, headers: dict[str, str] | None = None) -> str:
+    async def _get_text(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: aiohttp.ClientTimeout | None = None,
+    ) -> str:
         async with self._lock:
-            async with self._session.get(url, headers=headers) as resp:
+            async with self._session.get(
+                url,
+                headers=headers,
+                timeout=timeout or DEFAULT_TIMEOUT,
+            ) as resp:
                 body = await resp.text()
                 if resp.status >= 400:
                     raise aiohttp.ClientResponseError(
@@ -81,9 +105,20 @@ class PortacoolAPEXAPI:
             return None
         return json.loads(text)
 
-    async def _post_json(self, url: str, payload: dict[str, Any], headers: dict[str, str] | None = None) -> Any:
+    async def _post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str] | None = None,
+        timeout: aiohttp.ClientTimeout | None = None,
+    ) -> Any:
         async with self._lock:
-            async with self._session.post(url, json=payload, headers=headers) as resp:
+            async with self._session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=timeout or DEFAULT_TIMEOUT,
+            ) as resp:
                 body = await resp.text()
                 if resp.status >= 400:
                     raise aiohttp.ClientResponseError(
@@ -120,6 +155,29 @@ class PortacoolAPEXAPI:
                         headers=resp.headers,
                     )
 
+    async def get_devices(self) -> list[dict]:
+        """Used by config_flow to discover devices."""
+        url = f"{API_BASE}{DEVICES_MY_ENDPOINT}?page=1&pageSize=1000"
+        data = await self._get_json(url, headers=await self._headers())
+        if isinstance(data, dict):
+            items = data.get("items", [])
+            return items if isinstance(items, list) else []
+        return []
+
+    async def get_alerts_latest(self) -> list[dict]:
+        url = f"{API_BASE}{ALERTS_LATEST_ENDPOINT}"
+        payload = {"uniqueIds": [self._device_id]}
+        data = await self._post_json(url, payload, headers=await self._headers())
+
+        if not isinstance(data, list):
+            return []
+
+        for d in data:
+            if isinstance(d, dict) and d.get("uniqueId") == self._device_id:
+                alerts = d.get("alerts", [])
+                return alerts if isinstance(alerts, list) else []
+        return []
+
     # ---------------- Firebase helpers ----------------
 
     @staticmethod
@@ -150,16 +208,14 @@ class PortacoolAPEXAPI:
         if self._fb_id_token and self._fb_uid and now < self._fb_exp - 60:
             return self._fb_id_token, self._fb_uid
 
-        # 1) Get custom token from PortaCool
         custom_raw = await self._get_json(
             f"{API_BASE}{FIREBASE_CUSTOM_TOKEN_ENDPOINT}",
             headers=await self._headers(),
         )
         custom_token = self._extract_custom_token(custom_raw)
 
-        # 2) Exchange to idToken
         resp = await self._post_json(
-            VERIFY_CUSTOM_TOKEN_URL,
+            self._verify_custom_token_url,
             {"returnSecureToken": True, "token": custom_token},
             headers={"Content-Type": "application/json"},
         )
@@ -196,13 +252,6 @@ class PortacoolAPEXAPI:
         return out
 
     async def get_rtdb_state(self) -> tuple[dict[int, str], dict[str, Any]]:
-        """
-        Returns:
-          (datapoints_dict, timer_info_dict)
-
-        timer_info matches the RTDB /timer object:
-          {"SleepTimer": "...", "TimerExpiry": "..."}
-        """
         id_token, uid = await self._get_firebase_id_token_and_uid()
         auth_q = quote(id_token, safe="")
 
@@ -213,26 +262,5 @@ class PortacoolAPEXAPI:
         timer_node = await self._get_json(timer_url)
 
         datapoints = self._parse_datapoints_node(dp_node)
-
-        timer_info: dict[str, Any] = {}
-        if isinstance(timer_node, dict):
-            timer_info = timer_node
-
+        timer_info: dict[str, Any] = timer_node if isinstance(timer_node, dict) else {}
         return datapoints, timer_info
-
-    async def get_alerts_latest(self) -> list[dict]:
-        """
-        Returns list of alert objects (with alertName/timestamp) from REST.
-        """
-        url = f"{API_BASE}{ALERTS_LATEST_ENDPOINT}"
-        payload = {"uniqueIds": [self._device_id]}
-        data = await self._post_json(url, payload, headers=await self._headers())
-
-        if not isinstance(data, list):
-            return []
-
-        for d in data:
-            if isinstance(d, dict) and d.get("uniqueId") == self._device_id:
-                alerts = d.get("alerts", [])
-                return alerts if isinstance(alerts, list) else []
-        return []

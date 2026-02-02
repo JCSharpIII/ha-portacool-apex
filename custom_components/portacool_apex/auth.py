@@ -6,7 +6,7 @@ import aiohttp
 from .const import API_BASE, SIGNIN_ENDPOINT
 
 
-class PortacoolAPEXAuth:
+class PortaCoolApexAuth:
     """
     Auth helper that supports BOTH:
       - New style: async_get_token()  (username/password signin)
