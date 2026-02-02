@@ -1,210 +1,222 @@
-![PortaCool Apex](icon.png)
+![PortaCool APEX](icon.png)
 
 # Portacool APEX
 
-A Home Assistant custom integration for controlling **Portacool APEX evaporative coolers** using the official Portacool cloud backend (Firebase / REST).
+A Home Assistant custom integration for controlling **Portacool APEX evaporative coolers** using Portacool’s cloud backend (REST + Firebase Realtime Database).
 
-This integration is **UI-configured only** (no YAML) and exposes power, fan, pump, timer, temperature, water status, and device health in a clean, Home Assistant–native way.
+This integration is **UI-configured only** (no YAML).
 
-> This is an **unofficial** integration and is not affiliated with or endorsed by Portacool.
-
----
-
-## Features
-
-- Cloud authentication using Portacool account credentials
-- Automatic device discovery
-- Real-time state updates via Firebase WebSockets
-- Main power control
-- Fan mode control (Off → 100%)
-- Pump mode control (Off / Eco / Manual speeds / Max)
-- Sleep timer with remaining time sensor
-- Exit temperature sensor
-- Ambient temperature sensor
-- Water tank status monitoring
-- Input voltage monitoring
-- Clean entity model (no duplicate or conflicting controls)
-- Fully UI-configured via Config Flow (no YAML)
+> Unofficial integration — not affiliated with or endorsed by Portacool.
 
 ---
 
-## Entities Created
+## What’s working today
 
-Each Portacool APEX device creates the following entities.
+### Controls
+- **Power** (switch)
+- **Fan Mode** (select) — Off / 10% / 20% / 40% / 70% / 100%
+- **Pump Mode** (select) — Off / Eco / Manual 1–5 / Max  
+  - **Safety:** Pump control is disabled when the **Water Tank Empty** alert is active.
 
----
+### State & telemetry (sensors)
+- **Timer Remaining** (sensor) — countdown derived from `TimerExpiry`
+- **Temperatures** (sensors)
+  - Ambient Temperature (DP3)
+  - Exit Temperature (DP4)
+  - Media Temperature (DP23)
+  - Water Temperature (DP24)
+- **Calculated Airflow (CFM)** (sensor) — DP7 (empirically correlated)
+- **Max Airflow %** (sensor) — DP7 scaled vs `FAN_CFM_MAX`
+- **Input Voltage** (sensor) — DP31/DP32 (best available)
+- **Alert category sensors** (sensors)
+  - Overall Status
+  - Fan / Pump / Water / Temperature / Voltage status
+  - **Louvers status is hidden on non-louver models** (see “Model support”)
 
-### Switch Entities
-
-#### **Power**
-- Turns the entire unit **On / Off**
-- When powered off:
-  - Fan and pump controls remain visible but do not send commands
-  - Sensor updates continue (cloud-reported state)
-
----
-
-### Select Entities
-
-#### **Fan Mode**
-Controls fan output as discrete, user-friendly steps:
-
-- Off  
-- 20%  
-- 40%  
-- 60%  
-- 80%  
-- 100%
-
-Mapped internally to the device’s native fan control datapoints.
+### Water
+- **Water Alert** (sensor) — Empty / Low / Overfill (from alerts)
+- **Water Level** (sensor) — derived from DP5 (1–5 bars → % scale)
 
 ---
 
-#### **Pump Mode**
-Unified pump control combining **Off**, **presets**, and **manual speeds**:
+## Model support
 
-- Off
-- Eco
-- 1
-- 2
-- 3
-- 4
-- 5
-- Max
+The integration should work across the APEX line for the features above.
 
-This avoids conflicting states between Eco / Max and manual pump speeds.
+**Louvers**
+- APEX 500 / 700: hardware includes louvers; louver control datapoints are not implemented yet.
+- APEX 1200 / 2000 / 4000: no louvers; louver-related status is hidden.
 
----
-
-#### **Sleep Timer**
-Sets the device sleep timer:
-
-- Off
-- 30 minutes
-- 1 hour
-- 2 hours
-- 4 hours
-- 8 hours
-
----
-
-### Sensor Entities
-
-#### **Timer Remaining**
-- Remaining sleep-timer duration
-- Updates periodically
-- Clears automatically when the timer expires or is turned off
-- Displayed in minutes for readability
-
----
-
-#### **Exit Temperature**
-- Temperature of air exiting the unit
-- °F (reported directly from device)
-
----
-
-#### **Ambient Temperature**
-- Ambient intake temperature
-- °F
-
----
-
-#### **Water Status**
-Summarized water tank state derived from device alerts:
-
-- Normal
-- Low
-- Empty
-- Overflow
-
-Only the **highest-priority active condition** is shown.
-
----
-
-#### **Input Voltage**
-- Line input voltage reported by the unit
-- Used by the device internally for load and fault detection
+If you own a louver-capable model and can provide captures (datapoints + invoke-action payloads), louver control support can be added.
 
 ---
 
 ## Installation (HACS)
 
-### Recommended (HACS)
-
-1. Open **HACS**
-2. Go to **Integrations**
-3. Click **Custom repositories**
-4. Add this repository:
-      https://github.com/JCSharpIII/ha-portacool-apex
-5. Category: **Integration**
-6. Install **Portacool APEX**
-7. Restart Home Assistant
+1. Open **HACS → Integrations**
+2. **⋮ → Custom repositories**
+3. Add repository:
+   - `https://github.com/JCSharpIII/ha-portacool-apex`
+   - Category: **Integration**
+4. Install **Portacool APEX**
+5. Restart Home Assistant
 
 ---
 
 ## Setup
 
-1. Go to **Settings → Devices & Services**
-2. Click **Add Integration**
-3. Search for **Portacool APEX**
-4. Log in with your Portacool account credentials
-5. Your device will be discovered automatically
-
-The integration title and device name are pulled directly from the Portacool API (model and device name).
+1. **Settings → Devices & Services → Add Integration**
+2. Search for **Portacool APEX**
+3. Sign in with your Portacool credentials
+4. The integration discovers your devices and names the entry from the API (e.g., `APEX 1200 (PACA12001A1A)`)
 
 ---
 
-## How It Works
+## How it works
 
-- Authentication uses Portacool’s official cloud endpoints
-- State updates are received via **Firebase WebSockets**
-- Commands are sent using Portacool’s device action API
-- Polling fallback is used conservatively to avoid rate limits
-- Sensor updates continue even when the unit is powered off
-
----
-
-## Configuration Notes
-
-- YAML configuration is **not supported**
-- All entities are created automatically
-- Polling interval defaults to **60 seconds**
-- WebSocket updates are preferred whenever available
+- **Commands**: `POST https://api.services.portacool.com/device-api/devices/invoke-action`
+- **Device discovery**: `GET /device-api/devices/my`
+- **Alerts**: `POST /device-api/devices/alerts/latest`
+- **Realtime state**: Firebase RTDB (app-authenticated)
+  - The integration retrieves a Portacool “firebase custom token”, exchanges it for a Firebase `idToken`, and reads RTDB nodes for:
+    - `/users/<uid>/<uniqueId>/datapoints`
+    - `/users/<uid>/<uniqueId>/timer`
 
 ---
 
-## Known Limitations
+## Configuration (Options)
 
-- Cloud-only (no local control)
-- Fan RPM is not currently exposed by the API
-- Some internal datapoints are undocumented and inferred
-- Device availability depends on Portacool cloud uptime
+Open **Settings → Devices & Services → Portacool APEX → Configure**.
+
+Typical options:
+- **Firebase Web API Key** (public)  
+  Only change if Portacool rotates the key and auth starts failing.
+- **Polling interval**  
+  How often HA refreshes from cloud.
+- **Offline refresh**  
+  Limits cloud refresh when device power is off to reduce traffic.
 
 ---
 
-## Debugging & Support
+## Dashboard examples
 
-To enable debug logging:
+### Entities + history + gauge
+
+```yaml
+type: vertical-stack
+cards:
+  - type: entities
+    title: Portacool APEX
+    show_header_toggle: false
+    entities:
+      - entity: switch.apex_1200_power
+        name: Power
+      - entity: select.apex_1200_fan_mode
+        name: Fan Mode
+      - entity: select.apex_1200_pump_mode
+        name: Pump Mode
+      - entity: select.apex_1200_sleep_timer
+        name: Timer
+      - entity: sensor.apex_1200_timer_remaining
+        name: Timer Remaining (s)
+      - entity: sensor.apex_1200_water_alert
+        name: Water Alert
+      - entity: sensor.apex_1200_water_level
+        name: Water Level
+    state_color: true
+
+  - type: history-graph
+    title: Trends (last 2h)
+    hours_to_show: 2
+    refresh_interval: 30
+    entities:
+      - entity: sensor.apex_1200_exit_temperature
+        name: Exit
+      - entity: sensor.apex_1200_ambient_temperature
+        name: Ambient
+      - entity: sensor.apex_1200_calculated_airflow_cfm
+        name: Airflow (CFM)
+
+  - type: gauge
+    name: Water Level (Estimated)
+    entity: sensor.apex_1200_water_level
+    min: 0
+    max: 110
+    needle: false
+```
+
+Notes:
+- If you see the device name being prefixed on only one entity in a card, that’s usually the card’s “secondary info” / name resolution behavior; set explicit `name:` for each entity to keep it consistent.
+
+---
+
+## Debug logging
 
 ```yaml
 logger:
-default: info
-logs:
- custom_components.portacool_apex: debug
+  default: info
+  logs:
+    custom_components.portacool_apex: debug
+```
 
-When opening a GitHub issue, include:
-	•	Device model
-	•	Relevant logs
-	•	Description of the behavior
+---
 
-Roadmap / Ideas
-	•	Climate entity abstraction
-	•	Fan RPM detection (if exposed by API)
-	•	Better water level percentage mapping
-	•	Dashboard card templates
-	•	Multi-device support improvements
 
-License
+Dashboard Card Suggestions:
 
-MIT License
+
+Vertical Stack Card
+-----------------------
+
+type: vertical-stack
+cards:
+  - type: entities
+    title: Portacool Apex 1200
+    show_header_toggle: false
+    entities:
+      - entity: switch.apex_1200_power
+        name: Power
+      - entity: select.apex_1200_fan_mode
+        name: Fan Mode
+      - entity: select.apex_1200_pump_mode
+        name: Pump Mode
+      - entity: select.apex_1200_sleep_timer
+        name: Timer
+      - entity: sensor.apex_1200_timer_remaining
+        name: Timer Remaining (s)
+      - entity: sensor.apex_1200_water_alert
+        name: Alert
+    state_color: true
+  - type: history-graph
+    title: Trends (last 2h)
+    hours_to_show: 2
+    refresh_interval: 30
+    entities:
+      - entity: sensor.apex_1200_exit_temperature
+        name: Exit
+      - entity: sensor.apex_1200_ambient_temperature
+        name: Ambient
+      - entity: sensor.apex_1200_fan_feedback
+        name: Airflow (CFM)
+  - type: gauge
+    name: Water Level (Estimated)
+    entity: sensor.apex_1200_water_level
+    min: 0
+    max: 110
+    needle: false
+
+---
+
+## Known limitations
+
+- Cloud-only (no local LAN control)
+- Louvers controls not implemented
+- Some datapoints remain unknown and are documented as “inferred”
+
+---
+
+## License
+
+MIT
+
+
