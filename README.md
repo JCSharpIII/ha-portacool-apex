@@ -17,6 +17,7 @@ This integration is **UI-configured only** (no YAML).
 - **Fan Mode** (select) — Off / 10% / 20% / 40% / 70% / 100%
 - **Pump Mode** (select) — Off / Eco / Manual 1–5 / Max  
   - **Safety:** Pump control is disabled when the **Water Tank Empty** alert is active.
+- **Timer Mode:**.(select) - Off / 30m / 1h / 2h / 4h / 8h
 
 ### State & telemetry (sensors)
 - **Timer Remaining** (sensor) — countdown derived from `TimerExpiry`
@@ -99,6 +100,10 @@ Typical options:
 ---
 
 ## Dashboard examples
+
+(dashboard_vs1.png)
+(dashboard_vs2.png)
+(dashboard_vs3.png)
 
 ### Entities + history + gauge
 
