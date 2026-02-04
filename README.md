@@ -101,9 +101,9 @@ Typical options:
 
 ## Dashboard examples
 
-(dashboard_vs1.png)
-(dashboard_vs2.png)
-(dashboard_vs3.png)
+![controls](dashboard_vs1.png)
+![water level](dashboard_vs2.png)
+![history](dashboard_vs3.png)
 
 ### Entities + history + gauge
 
