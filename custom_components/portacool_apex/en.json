@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Portacool Login",
+        "description": "Enter your Portacool account credentials."
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password.",
+      "cannot_connect": "Could not connect to Portacool.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "no_devices_found": "No devices found on this account."
+    }
+  }
+}

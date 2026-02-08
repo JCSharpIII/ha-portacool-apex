@@ -48,8 +48,10 @@ FAN_CFM_MAX = 4000  # Apex 1200 rated ~4000 CFM (adjust per model later if desir
 # Temperature datapoints (confirmed)
 DP_AMBIENT_TEMP = 3  # Ambient / Intake
 DP_EXIT_TEMP = 4  # Exit
-DP_MEDIA_TEMP = 23  # Media/Pad
-DP_WATER_TEMP = 24  # Water
+DP_INTERNAL_COMPONENT_TEMP = 23  # Media/Pad
+
+# Humidity datapoint (confirmed)
+DP_RELATIVE_HUMIDITY = 24  # Relative Humidity
 
 # Voltage datapoints
 DP_VOLTAGE_A = 31

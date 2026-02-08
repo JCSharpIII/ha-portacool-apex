@@ -20,8 +20,8 @@ from .const import (
     # telemetry dps
     DP_AMBIENT_TEMP,
     DP_EXIT_TEMP,
-    DP_MEDIA_TEMP,
-    DP_WATER_TEMP,
+    DP_INTERNAL_COMPONENT_TEMP,
+    DP_RELATIVE_HUMIDITY,
     DP_VOLTAGE_A,
     DP_VOLTAGE_B,
     DP_FAN_FEEDBACK,
@@ -488,6 +488,54 @@ class PortaCoolCategoryStatusSensor(_BasePortaCoolSensor):
         ]
         return {"active_count": len(active), "active_alerts": active}
 
+class PortaCoolRelativeHumiditySensor(_BasePortaCoolSensor):
+    """Relative Humidity (DP_RELATIVE_HUMIDITY) as %."""
+
+    _attr_device_class = "humidity"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = "measurement"
+    _attr_icon = "mdi:water-percent"
+
+    def __init__(
+        self,
+        coordinator,
+        api,
+        entry,
+        name: str = "Relative Humidity",
+        unique_suffix: str = "relative_humidity",
+        dp_id: int = DP_RELATIVE_HUMIDITY,
+        icon: str | None = None,
+    ):
+        super().__init__(coordinator, api, entry)
+        self._attr_name = name
+        self._attr_unique_id = f"{self._api.device_id}_{unique_suffix}"
+        self._dp_id = dp_id
+        if icon:
+            self._attr_icon = icon
+
+    @property
+    def native_value(self) -> float | None:
+        raw = self._get_dp(self._dp_id)
+        if raw is None:
+            return None
+        try:
+            val = float(raw)
+        except Exception:
+            return None
+
+        # Clamp to valid RH range
+        if val < 0:
+            val = 0.0
+        elif val > 100:
+            val = 100.0
+
+        # Keep one decimal if present; HA can chart floats fine
+        return round(val, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"raw": self._get_dp(self._dp_id), "dp": self._dp_id}
+
 
 class PortaCoolOverallStatusSensor(_BasePortaCoolSensor):
     _attr_name = "Overall Status"
@@ -535,19 +583,19 @@ async def async_setup_entry(hass, entry, async_add_entities):
         dp_id=DP_EXIT_TEMP,
         icon="mdi:air-conditioner",
     )
-    temp_media = PortaCoolTemperatureSensor(
+    temp_internal_component = PortaCoolTemperatureSensor(
         coordinator, api, entry,
-        name="Media Temperature",
-        unique_suffix="media_temp",
-        dp_id=DP_MEDIA_TEMP,
-        icon="mdi:air-filter",
+        name="Internal Component Temperature",
+        unique_suffix="internal_component_temp",
+        dp_id=DP_INTERNAL_COMPONENT_TEMP,
+        icon="mdi:thermometer",
     )
-    temp_water = PortaCoolTemperatureSensor(
+    relative_humidity = PortaCoolRelativeHumiditySensor(
         coordinator, api, entry,
-        name="Water Temperature",
-        unique_suffix="water_temp",
-        dp_id=DP_WATER_TEMP,
-        icon="mdi:water-thermometer",
+        name="Relative Humidity",
+        unique_suffix="relative_humidity",
+        dp_id=DP_RELATIVE_HUMIDITY,
+        icon="mdi:water-percent",
     )
 
     entities: list[SensorEntity] = [
@@ -556,8 +604,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         PortaCoolTimerRemainingSensor(coordinator, api, entry),
         temp_ambient,
         temp_exit,
-        temp_media,
-        temp_water,
+        temp_internal_component,
+        relative_humidity,
         PortaCoolInputVoltageSensor(coordinator, api, entry),
         PortaCoolWaterAlertSensor(coordinator, api, entry),
         PortaCoolWaterLevelSensor(coordinator, api, entry),

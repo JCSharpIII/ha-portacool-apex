@@ -10,7 +10,7 @@ This integration is **UI-configured only** (no YAML).
 
 ---
 
-## What’s working today
+## What's working today
 
 ### Controls
 - **Power** (switch)
@@ -24,8 +24,8 @@ This integration is **UI-configured only** (no YAML).
 - **Temperatures** (sensors)
   - Ambient Temperature (DP3)
   - Exit Temperature (DP4)
-  - Media Temperature (DP23)
-  - Water Temperature (DP24)
+  - Internal Component Temperature (DP23)
+  - Relative Humidity (DP24)
 - **Calculated Airflow (CFM)** (sensor) — DP7 (empirically correlated)
 - **Max Airflow %** (sensor) — DP7 scaled vs `FAN_CFM_MAX`
 - **Input Voltage** (sensor) — DP31/DP32 (best available)
@@ -93,9 +93,9 @@ Typical options:
 - **Firebase Web API Key** (public)  
   Only change if Portacool rotates the key and auth starts failing.
 - **Polling interval**  
-  How often HA refreshes from cloud.
+  How often HA refreshes from cloud. (Default value of 8 is recommended.)
 - **Offline refresh**  
-  Limits cloud refresh when device power is off to reduce traffic.
+  Limits cloud refresh when device power is off to reduce traffic. (Default value of 60 is recommended.)
 
 ---
 
