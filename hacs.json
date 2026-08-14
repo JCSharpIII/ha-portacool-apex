@@ -1,7 +1,5 @@
 {
   "name": "PortaCool Apex",
   "content_in_root": false,
-  "domain": "portacool_apex",
-  "homeassistant": "2024.12.0",
   "render_readme": true
 }
